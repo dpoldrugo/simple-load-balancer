@@ -1,23 +1,84 @@
 const express = require('express');
-const request = require('request');
+const app = express();
+const axios = require('axios').default;
+const balancer = require('./balancer.js')
 
-const servers = [
-  'https://middleware-api-1.potres2020.repl.co', 'https://middleware-api-2.potres2020.repl.co'
-];
-let cur = 0;
+let balancerRequestContext;
 
-const handler = (req, res) => {
-  // Pipe the vanilla node HTTP request (a readable stream) into `request`
-  // to the next server URL. Then, since `res` implements the writable stream
-  // interface, you can just `pipe()` into `res`.
-  res.set('X-Origin', servers[cur])
-  req.pipe(request({ url: servers[cur] + req.url })).pipe(res);
-  cur = (cur + 1) % servers.length;
+const handler = function (req, res) {
+  balancerRequestContext = balancer.createNewBalancerRequestContext();
+  let responseSent = false;
+
+  callBackend(balancerRequestContext.lastBackend);
+
+  function callBackend(backend) {
+    function handleError(error) {
+      balancerRequestContext.incrementExecutionCount();
+      console.error("Error from lastBackend. Backend:", balancerRequestContext.lastBackend, "Error:", error.message);
+      console.debug(error.stack);
+      if (balancerRequestContext.hasRemainingBackendsToTry()) {
+        callBackend(balancerRequestContext.removeLastBackendAndGetNew());
+      } else {
+        if (responseSent)
+          return;
+        let errorMessage = "No available backends! All backends: " + JSON.stringify(balancerRequestContext.backendsAll);
+        balancerRequestContext.allFailed = true;
+        console.error(errorMessage);
+        res.status(500).json({error: errorMessage});
+        responseSent = true;
+      }
+    }
+
+    const {host, ...newHeadersRequest } = req.headers;
+
+    axios({
+      method: req.method,
+      headers: newHeadersRequest,
+      url: backend + req.url,
+      data: req.body,
+      responseType: 'stream',
+      validateStatus: function (status) {
+        return status < 500;
+      },
+    })
+      .then(function (response) {
+        balancerRequestContext.incrementExecutionCount();
+        res.set('X-Origin', backend);
+        const {host, ...newHeadersResponse } = response.headers;
+        res.headers = newHeadersResponse;
+        response.data.pipe(res);
+      })
+      .catch(function (error) {
+        handleError(error);
+      });
+  }
 };
-const server = express()
+
+const profilerMiddleware = (req, res, next) => {
+  const start = Date.now();
+  // The 'finish' event comes from core Node.js, it means Node is done handing
+  // off the response headers and body to the underlying OS.
+  res.on('finish', () => {
+    let allFailedMessage = '';
+    if (balancerRequestContext.allFailed) {
+      allFailedMessage = 'FAILED - ';
+    }
+    console.log(allFailedMessage + balancerRequestContext.lastBackend, req.method, req.url,
+      '[Duration:', Date.now() - start, "ms,", 'Try count:', balancerRequestContext.executionCount.count+'].');
+    if (Object.keys(req.body).length > 0)
+      console.debug(req.body)
+  });
+  next();
+};
+
+app
+  .use(express.json())
+  .use(profilerMiddleware)
   .get('*', handler)
   .post('*', handler)
   .put('*', handler)
-  .delete('*', handler);
+  .delete('*', handler)
+  .listen(8080, () => {
+    console.log('App started');
+  });
 
-server.listen(8080);
