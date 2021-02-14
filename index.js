@@ -63,7 +63,7 @@ const profilerMiddleware = (req, res, next) => {
     if (balancerRequestContext.allFailed) {
       allFailedMessage = 'FAILED - ';
     }
-    console.log(allFailedMessage + balancerRequestContext.lastBackend, req.method, req.url,
+    console.log(allFailedMessage + req.method, balancerRequestContext.lastBackend + req.url,
       '[Duration:', Date.now() - start, "ms,", 'Try count:', balancerRequestContext.executionCount.count+'].');
     if (Object.keys(req.body).length > 0)
       console.debug(req.body)
