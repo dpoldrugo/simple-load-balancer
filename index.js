@@ -46,8 +46,9 @@ const handler = function (req, res) {
         res.set('X-Origin', backend);
         const {host, ...newHeadersResponse } = response.headers;
         for (let header in newHeadersResponse) {
-          res.setHeader(header, newHeadersResponse[header]);
+            res.setHeader(header, newHeadersResponse[header]);
         }
+        res.statusCode = response.status;
         response.data.pipe(res);
       })
       .catch(function (error) {
