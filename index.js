@@ -45,7 +45,9 @@ const handler = function (req, res) {
         balancerRequestContext.incrementExecutionCount();
         res.set('X-Origin', backend);
         const {host, ...newHeadersResponse } = response.headers;
-        res.headers = newHeadersResponse;
+        for (let header in newHeadersResponse) {
+          res.setHeader(header, newHeadersResponse[header]);
+        }
         response.data.pipe(res);
       })
       .catch(function (error) {
