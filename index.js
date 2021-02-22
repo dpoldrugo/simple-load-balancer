@@ -39,7 +39,7 @@ const handler = function (req, res) {
 
     function handleError(error) {
       req.balancerRequestContext.incrementExecutionCount();
-      console.error("Error from lastBackend. Backend:", req.balancerRequestContext.lastBackend, "Error:", error.message);
+      console.error("Error from lastBackend. URL:", req.balancerRequestContext.lastBackend + req.url, "Error:", error.message);
       console.debug(error.stack);
       if (req.balancerRequestContext.hasRemainingBackendsToTry()) {
         callBackend(req.balancerRequestContext.removeLastBackendAndGetNew());
@@ -49,7 +49,7 @@ const handler = function (req, res) {
         let errorMessage = "No available backends! All backends: " + JSON.stringify(req.balancerRequestContext.backendsAll);
         req.balancerRequestContext.allFailed = true;
         console.error(errorMessage);
-        res.status(500).json({error: errorMessage});
+        res.status(500).json({error: errorMessage, code:500});
         responseSent = true;
       }
     }
