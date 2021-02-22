@@ -19,6 +19,7 @@ class SimpleBalancer {
     this.refreshIntervalSeconds = refreshIntervalSeconds;
     getRemoteConfig().then(value => { validateAndChangeBackends(value, this) });
     scheduleRefresh(this);
+    console.log("Initalized SimpleBalancer with: REFRESH_INTERVAL_SECONDS="+process.env.REFRESH_INTERVAL_SECONDS + "; REMOTE_CONFIG_URL=" + process.env.REMOTE_CONFIG_URL );
   }
 
   createNewBalancerRequestContext() {
