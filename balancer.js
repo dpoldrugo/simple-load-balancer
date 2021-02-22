@@ -1,24 +1,59 @@
-const Database = require("@replit/database");
-const db = new Database(process.env.REPLIT_DB_URL);
-
-console.log("DB url: " + db.key)
-
-// list of backends
-let backends = [
-  //'https://currently-down.potres2020.repl.co',
-  'https://middleware-api-1.potres2020.repl.co',
-  'https://middleware-api-2.potres2020.repl.co'
-];
-
-initDb();
-
+const schedule = require('node-schedule');
+const axios = require('axios').default;
 const P2cBalancer = require("load-balancers").P2cBalancer;
 
-// Initializes the Power of 2 Choices (P2c) Balancer with backends.
-const balancer = new P2cBalancer(backends.length);
+class SimpleBalancer {
 
-function createNewBalancerRequestContext() {
-  return new BalancerRequestContext(backends[balancer.pick()], backends);
+  // list of backends
+  backends = [
+    // see remote-config-example.json for example values under property backends
+    // 'http://127.0.0.1:3000'
+  ];
+
+  P2cBalancer;
+
+  constructor(refreshIntervalSeconds) {
+    if (!process.env.REMOTE_CONFIG_URL) {
+      throw new Error('ENV variable REMOTE_CONFIG_URL is not defined!')
+    }
+    this.refreshIntervalSeconds = refreshIntervalSeconds;
+    getRemoteConfig().then(value => { validateAndChangeBackends(value, this) });
+    scheduleRefresh(this);
+  }
+
+  createNewBalancerRequestContext() {
+    return new BalancerRequestContext(this.backends[this.P2cBalancer.pick()], this.backends);
+  }
+}
+
+function scheduleRefresh(balancer) {
+  this.job = schedule.scheduleJob('*/' + balancer.refreshIntervalSeconds + ' * * * * *', function(fireDate){
+    getRemoteConfig().then( value => {
+      validateAndChangeBackends(value, balancer);
+    } ).catch(reason => {
+      console.error("Error getting backends from REMOTE_CONFIG_URL (" + process.env.REMOTE_CONFIG_URL+"). Reason: " + reason)
+    });
+
+  });
+}
+
+function validateAndChangeBackends(newConfigResponse, balancer) {
+  if (!newConfigResponse.backends) {
+    console.warn("Corrupt format in REMOTE_CONFIG_URL, fix it. Backends will stay the same. REMOTE_CONFIG_URL=" + process.env.REMOTE_CONFIG_URL);
+    console.info("Using old backends:", balancer.backends);
+    return false;
+  }
+  if (JSON.stringify(newConfigResponse.backends) !== JSON.stringify(balancer.backends)) {
+    console.log("Balancer configuration change from REMOTE_CONFIG_URL:", process.env.REMOTE_CONFIG_URL)
+    console.log("Old backends:", balancer.backends);
+    console.log("New backends:", newConfigResponse.backends)
+    balancer.backends = newConfigResponse.backends;
+    balancer.P2cBalancer = new P2cBalancer(balancer.backends.length);
+  }
+  return true;
+}
+async function getRemoteConfig() {
+  return axios.get(process.env.REMOTE_CONFIG_URL).then(value => value.data);
 }
 
 class BalancerRequestContext {
@@ -35,7 +70,7 @@ class BalancerRequestContext {
   }
 
   hasRemainingBackendsToTry() {
-    return this.executionCount.count < backends.length;
+    return this.executionCount.count < this.backends.length;
   }
 
   removeLastBackendAndGetNew() {
@@ -47,34 +82,9 @@ class BalancerRequestContext {
 }
 
 class ExecutionCount {
-  constructor() {
-    this.count = 0;
-  }
-}
-
-async function initDb() {
-  //await clearDb();
-  await initalizeDbIfNeeded();
-}
-
-async function clearDb() {
-  console.log("Deleting DB.");
-  await db.empty();
-}
-
-async function initalizeDbIfNeeded() {
-  db.get("backends").then(value => {
-    if (value != undefined) {
-      backends = value
-      console.log("Backends from DB: " + JSON.stringify(value))
-    }
-    else {
-      db.set("backends", backends);
-      console.log("Adding initial backends DB: " + JSON.stringify(backends))
-    }
-  });
+    count = 0;
 }
 
 module.exports = {
-  createNewBalancerRequestContext
+  SimpleBalancer
 }

@@ -1,0 +1,6 @@
+{
+  "backends": [
+    "https://middleware-api-test.herokuapp.com",
+    "https://poters2020-middleware-api-prod.herokuapp.com"
+  ]
+}

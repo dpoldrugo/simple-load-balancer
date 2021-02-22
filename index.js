@@ -1,36 +1,18 @@
 const express = require('express');
 const app = express();
 const axios = require('axios').default;
-const balancer = require('./balancer.js')
+const balancer = require('./balancer.js');
+const simpleBalancer = new balancer.SimpleBalancer(+process.env.REFRESH_INTERVAL_SECONDS || 5);
 
-let balancerRequestContext;
 
 const handler = function (req, res) {
-  balancerRequestContext = balancer.createNewBalancerRequestContext();
+  req.balancerRequestContext = simpleBalancer.createNewBalancerRequestContext();
   let responseSent = false;
 
-  callBackend(balancerRequestContext.lastBackend);
+  callBackend(req.balancerRequestContext.lastBackend);
 
   function callBackend(backend) {
-    function handleError(error) {
-      balancerRequestContext.incrementExecutionCount();
-      console.error("Error from lastBackend. Backend:", balancerRequestContext.lastBackend, "Error:", error.message);
-      console.debug(error.stack);
-      if (balancerRequestContext.hasRemainingBackendsToTry()) {
-        callBackend(balancerRequestContext.removeLastBackendAndGetNew());
-      } else {
-        if (responseSent)
-          return;
-        let errorMessage = "No available backends! All backends: " + JSON.stringify(balancerRequestContext.backendsAll);
-        balancerRequestContext.allFailed = true;
-        console.error(errorMessage);
-        res.status(500).json({error: errorMessage});
-        responseSent = true;
-      }
-    }
-
     const {host, ...newHeadersRequest } = req.headers;
-
     axios({
       method: req.method,
       headers: newHeadersRequest,
@@ -42,7 +24,7 @@ const handler = function (req, res) {
       },
     })
       .then(function (response) {
-        balancerRequestContext.incrementExecutionCount();
+        req.balancerRequestContext.incrementExecutionCount();
         res.set('X-Origin', backend);
         const {host, ...newHeadersResponse } = response.headers;
         for (let header in newHeadersResponse) {
@@ -54,6 +36,23 @@ const handler = function (req, res) {
       .catch(function (error) {
         handleError(error);
       });
+
+    function handleError(error) {
+      req.balancerRequestContext.incrementExecutionCount();
+      console.error("Error from lastBackend. Backend:", req.balancerRequestContext.lastBackend, "Error:", error.message);
+      console.debug(error.stack);
+      if (req.balancerRequestContext.hasRemainingBackendsToTry()) {
+        callBackend(req.balancerRequestContext.removeLastBackendAndGetNew());
+      } else {
+        if (responseSent)
+          return;
+        let errorMessage = "No available backends! All backends: " + JSON.stringify(req.balancerRequestContext.backendsAll);
+        req.balancerRequestContext.allFailed = true;
+        console.error(errorMessage);
+        res.status(500).json({error: errorMessage});
+        responseSent = true;
+      }
+    }
   }
 };
 
@@ -63,11 +62,11 @@ const profilerMiddleware = (req, res, next) => {
   // off the response headers and body to the underlying OS.
   res.on('finish', () => {
     let allFailedMessage = '';
-    if (balancerRequestContext.allFailed) {
+    if (req.balancerRequestContext.allFailed) {
       allFailedMessage = 'FAILED - ';
     }
-    console.log(allFailedMessage + req.method, balancerRequestContext.lastBackend + req.url,
-      '[Duration:', Date.now() - start, "ms,", 'Try count:', balancerRequestContext.executionCount.count+'].');
+    console.log(allFailedMessage + req.method, req.balancerRequestContext.lastBackend + req.url,
+      '[Duration:', Date.now() - start, "ms,", 'Try count:', req.balancerRequestContext.executionCount.count+'].');
     if (Object.keys(req.body).length > 0)
       console.debug(req.body)
   });
@@ -81,7 +80,7 @@ app
   .post('*', handler)
   .put('*', handler)
   .delete('*', handler)
-  .listen(8080, () => {
+  .listen(+process.env.PORT || 8080, () => {
     console.log('App started');
   });
 
